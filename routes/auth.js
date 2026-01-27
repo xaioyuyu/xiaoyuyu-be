@@ -16,6 +16,63 @@ const router = express.Router();
 // 登录失败最大次数
 const MAX_FAILED_LOGIN = 5;
 
+/**
+ * @swagger
+ * tags:
+ *   name: Auth
+ *   description: 用户认证与授权相关接口
+ */
+
+/**
+ * @swagger
+ * /api/register:
+ *   post:
+ *     summary: 用户注册
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名（唯一）
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: 邮箱（唯一）
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 description: 登录密码
+ *               nickName:
+ *                 type: string
+ *                 description: 昵称（可选）
+ *               avatarUrl:
+ *                 type: string
+ *                 description: 头像地址（可选）
+ *           example:
+ *             username: test_user
+ *             email: test@example.com
+ *             password: P@ssw0rd
+ *             nickName: 测试用户
+ *             avatarUrl: https://example.com/avatar.png
+ *     responses:
+ *       201:
+ *         description: 注册成功
+ *       400:
+ *         description: 参数错误
+ *       409:
+ *         description: 用户名或邮箱已存在
+ *       500:
+ *         description: 服务器内部错误
+ */
 // 注册接口 POST /api/register
 router.post('/register', async (req, res) => {
     try {
@@ -101,6 +158,48 @@ router.post('/register', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/login:
+ *   post:
+ *     summary: 用户登录
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 description: 登录密码
+ *               rememberMe:
+ *                 type: boolean
+ *                 description: 记住登录（使用更长时间的 Refresh Token）
+ *           example:
+ *             username: test_user
+ *             password: P@ssw0rd
+ *             rememberMe: true
+ *     responses:
+ *       200:
+ *         description: 登录成功
+ *       400:
+ *         description: 参数错误
+ *       401:
+ *         description: 用户名或密码错误
+ *       403:
+ *         description: 账号被禁用或锁定
+ *       500:
+ *         description: 服务器内部错误
+ */
 // 登录接口 POST /api/login
 router.post('/login', async (req, res) => {
     try {
@@ -231,6 +330,17 @@ router.post('/login', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/logout:
+ *   post:
+ *     summary: 用户登出
+ *     tags: [Auth]
+ *     description: 清除 Cookie 中的访问令牌和刷新令牌
+ *     responses:
+ *       200:
+ *         description: 登出成功
+ */
 // 登出接口 POST /api/logout
 router.post('/logout', async (req, res) => {
     try {
@@ -257,6 +367,24 @@ router.post('/logout', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/profile:
+ *   get:
+ *     summary: 获取当前登录用户信息
+ *     tags: [Auth]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *       401:
+ *         description: 未认证
+ *       404:
+ *         description: 用户不存在
+ *       500:
+ *         description: 服务器内部错误
+ */
 // 一个示例受保护接口，包含角色判断（例如只允许 admin 访问）
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
@@ -295,6 +423,22 @@ router.get('/profile', authMiddleware, async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/admin-only:
+ *   get:
+ *     summary: 仅管理员可访问的接口
+ *     tags: [Auth]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: 访问成功
+ *       401:
+ *         description: 未认证
+ *       403:
+ *         description: 无访问权限
+ */
 // 示例：仅 admin 角色可访问的接口
 router.get('/admin-only', authMiddleware, requireRole('admin'), (req, res) => {
     return res.json({

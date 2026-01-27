@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 const { cookieParser } = require('./middlewares/auth');
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
@@ -26,6 +28,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// Swagger 文档（自动根据 JSDoc 生成）
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 // 数据库连接测试路由（如需要可打开）
 // app.get('/health', async (req, res) => {
 //   const dbStatus = await testConnection();
@@ -49,3 +54,4 @@ app.listen(port, async () => {
   // 启动时测试数据库连接
   await testConnection();
 });
+
