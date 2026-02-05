@@ -6,6 +6,10 @@ const swaggerSpec = require('./config/swagger');
 const { cookieParser } = require('./middlewares/auth');
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
+const recordRoutes = require('./routes/records');
+const recordTypeRoutes = require('./routes/recordTypes');
+const categoryRoutes = require('./routes/categories');
+const tagRoutes = require('./routes/tags');
 
 const app = express();
 const port = process.env.PORT || 3030;
@@ -31,6 +35,12 @@ app.use(cookieParser());
 // Swagger 文档（自动根据 JSDoc 生成）
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+// 导出 swagger JSON
+app.get('/swagger.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
 // 数据库连接测试路由（如需要可打开）
 // app.get('/health', async (req, res) => {
 //   const dbStatus = await testConnection();
@@ -44,13 +54,19 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 // Auth 相关接口
 app.use('/api', authRoutes);
 
+// 记账相关接口
+app.use('/api', recordRoutes);
+app.use('/api', recordTypeRoutes);
+app.use('/api', categoryRoutes);
+app.use('/api', tagRoutes);
+
 app.get('/', (req, res) => {
   res.send('Hello World!');
 });
 
 // 启动服务器并测试数据库连接
 app.listen(port, async () => {
-  console.log(`Finsmart API listening on port ${port}`);
+  console.log(`Finsmart API listening on port ${port} and swagger docs on http://localhost:${port}/api-docs and swagger json on http://localhost:${port}/swagger.json`);
   // 启动时测试数据库连接
   await testConnection();
 });

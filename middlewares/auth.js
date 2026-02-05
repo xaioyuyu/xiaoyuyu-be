@@ -161,6 +161,7 @@ module.exports = {
     setAuthCookies,
     clearAuthCookies,
     revokeRefreshToken,
+    hashToken,
 };
 
 

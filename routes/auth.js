@@ -8,8 +8,10 @@ const {
     revokeRefreshToken,
     authMiddleware,
     requireRole,
+    hashToken,
 } = require('../middlewares/auth');
 const { query } = require('../config/database');
+const { success, fail, httpError, MESSAGE_CODES } = require('../utils/response');
 
 const router = express.Router();
 
@@ -79,10 +81,7 @@ router.post('/register', async (req, res) => {
         const { username, email, password, nickName, avatarUrl } = req.body || {};
 
         if (!username || !email || !password) {
-            return res.status(400).json({
-                code: 400,
-                message: '用户名、邮箱和密码不能为空',
-            });
+            return fail(res, MESSAGE_CODES.USERNAME_OR_EMAIL_REQUIRED);
         }
 
         // 检查用户名或邮箱是否已存在
@@ -99,16 +98,10 @@ router.post('/register', async (req, res) => {
         if (existedUsers[0]) {
             const existed = existedUsers[0];
             if (existed.username === username) {
-                return res.status(409).json({
-                    code: 409,
-                    message: '用户名已被占用',
-                });
+                return fail(res, MESSAGE_CODES.USERNAME_EXISTS);
             }
             if (existed.email === email) {
-                return res.status(409).json({
-                    code: 409,
-                    message: '邮箱已被占用',
-                });
+                return fail(res, MESSAGE_CODES.EMAIL_EXISTS);
             }
         }
 
@@ -128,10 +121,10 @@ router.post('/register', async (req, res) => {
 
         const newUserId = result.insertId;
 
-        return res.status(201).json({
-            code: 0,
-            message: '注册成功',
-            data: {
+        return success(
+            res,
+            MESSAGE_CODES.REGISTER_SUCCESS,
+            {
                 user: {
                     id: newUserId,
                     username,
@@ -141,20 +134,14 @@ router.post('/register', async (req, res) => {
                     role: 'user',
                 },
             },
-        });
+        );
     } catch (err) {
         console.error('POST /api/register error:', err);
         // 唯一约束兜底处理
         if (err && err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({
-                code: 409,
-                message: '用户名或邮箱已存在',
-            });
+            return fail(res, MESSAGE_CODES.USERNAME_OR_EMAIL_EXISTS);
         }
-        return res.status(500).json({
-            code: 500,
-            message: '服务器内部错误',
-        });
+        return httpError(res, 500, MESSAGE_CODES.INTERNAL_SERVER_ERROR);
     }
 });
 
@@ -206,10 +193,7 @@ router.post('/login', async (req, res) => {
         const { username, password, rememberMe } = req.body || {};
 
         if (!username || !password) {
-            return res.status(400).json({
-                code: 400,
-                message: '用户名和密码不能为空',
-            });
+            return fail(res, MESSAGE_CODES.PASSWORD_REQUIRED);
         }
 
         // 查询用户（只支持用户名登录），排除软删除用户
@@ -227,26 +211,17 @@ router.post('/login', async (req, res) => {
         // 用户不存在或被软删除
         if (!user || user.is_deleted) {
             // 出于安全考虑，不暴露用户是否存在
-            return res.status(401).json({
-                code: 401,
-                message: '用户名或密码错误',
-            });
+            return fail(res, MESSAGE_CODES.USERNAME_OR_PASSWORD_ERROR);
         }
 
         // 账号禁用
         if (user.status === 0) {
-            return res.status(403).json({
-                code: 403,
-                message: '账号已被禁用，请联系管理员',
-            });
+            return fail(res, MESSAGE_CODES.ACCOUNT_DISABLED);
         }
 
         // 登录失败次数达到上限，视为锁定
         if (user.failed_login_count >= MAX_FAILED_LOGIN) {
-            return res.status(403).json({
-                code: 403,
-                message: '账号已被锁定，请稍后重试或联系管理员',
-            });
+            return fail(res, MESSAGE_CODES.ACCOUNT_LOCKED);
         }
 
         const passwordMatch = await bcrypt.compare(password, user.password_hash);
@@ -262,10 +237,7 @@ router.post('/login', async (req, res) => {
                 [user.id],
             );
 
-            return res.status(401).json({
-                code: 401,
-                message: '用户名或密码错误',
-            });
+            return fail(res, MESSAGE_CODES.USERNAME_OR_PASSWORD_ERROR);
         }
 
         // 登录成功：重置失败次数，更新 last_login_at
@@ -309,10 +281,10 @@ router.post('/login', async (req, res) => {
         });
 
         // 返回用户基础信息，Access Token 不需要在 body 中返回
-        return res.json({
-            code: 0,
-            message: '登录成功',
-            data: {
+        return success(
+            res,
+            MESSAGE_CODES.LOGIN_SUCCESS,
+            {
                 user: {
                     id: user.id,
                     username: user.username,
@@ -320,13 +292,10 @@ router.post('/login', async (req, res) => {
                     role: user.role,
                 },
             },
-        });
+        );
     } catch (err) {
         console.error('POST /api/login error:', err);
-        return res.status(500).json({
-            code: 500,
-            message: '服务器内部错误',
-        });
+        return httpError(res, 500, MESSAGE_CODES.INTERNAL_SERVER_ERROR);
     }
 });
 
@@ -353,17 +322,89 @@ router.post('/logout', async (req, res) => {
 
         clearAuthCookies(res);
 
-        return res.json({
-            code: 0,
-            message: '登出成功',
-        });
+        return success(res, MESSAGE_CODES.LOGOUT_SUCCESS);
     } catch (err) {
         console.error('POST /api/logout error:', err);
         // 出于安全考虑，即使出错也返回成功
-        return res.json({
-            code: 0,
-            message: '登出成功',
+        return success(res, MESSAGE_CODES.LOGOUT_SUCCESS);
+    }
+});
+
+/**
+ * @swagger
+ * /api/refresh-token:
+ *   post:
+ *     summary: 使用 Refresh Token 刷新 Access Token
+ *     description: |
+ *       从 HttpOnly Cookie 中读取 refresh_token，校验未过期且未撤销后，签发新的访问令牌（access_token）写入 Cookie。
+ *       不返回 token 字符串，仅通过 Cookie 续期。前端收到 200 即视为刷新成功。
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: 刷新成功
+ *       401:
+ *         description: 未认证或刷新令牌无效
+ *       500:
+ *         description: 服务器内部错误
+ */
+router.post('/refresh-token', async (req, res) => {
+    try {
+        const refreshTokenRaw = req.cookies?.refresh_token;
+
+        if (!refreshTokenRaw) {
+            return httpError(res, 401, MESSAGE_CODES.UNAUTHORIZED, null, '未认证：缺少刷新令牌');
+        }
+
+        const tokenHash = hashToken(refreshTokenRaw);
+
+        const rows = await query(
+            `
+      SELECT
+        urt.user_id,
+        urt.remember_me,
+        urt.expires_at,
+        urt.revoked,
+        u.username,
+        u.role
+      FROM user_refresh_tokens urt
+      JOIN users u ON urt.user_id = u.id
+      WHERE urt.token_hash = ?
+      LIMIT 1
+    `,
+            [tokenHash],
+        );
+
+        const record = rows[0];
+
+        if (!record || record.revoked) {
+            clearAuthCookies(res);
+            return httpError(res, 401, MESSAGE_CODES.UNAUTHORIZED, null, '未认证或刷新令牌无效');
+        }
+
+        const now = new Date();
+        const expiresAt = new Date(record.expires_at);
+        if (expiresAt <= now) {
+            clearAuthCookies(res);
+            return httpError(res, 401, MESSAGE_CODES.UNAUTHORIZED, null, '刷新令牌已过期');
+        }
+
+        const payload = {
+            sub: record.user_id,
+            username: record.username,
+            role: record.role,
+        };
+
+        const newAccessToken = generateAccessToken(payload);
+
+        // 只需刷新 access_token，refresh_token 原样保留在 Cookie 和数据库中
+        setAuthCookies(res, newAccessToken, refreshTokenRaw, {
+            rememberMe: !!record.remember_me,
         });
+
+        return success(res, MESSAGE_CODES.SUCCESS);
+    } catch (err) {
+        console.error('POST /api/refresh-token error:', err);
+        return httpError(res, 500, MESSAGE_CODES.INTERNAL_SERVER_ERROR);
     }
 });
 
@@ -387,6 +428,7 @@ router.post('/logout', async (req, res) => {
  */
 // 一个示例受保护接口，包含角色判断（例如只允许 admin 访问）
 router.get('/profile', authMiddleware, async (req, res) => {
+    // console.log('GET /api/profile', req);
     try {
         const users = await query(
             `
@@ -401,25 +443,245 @@ router.get('/profile', authMiddleware, async (req, res) => {
         const user = users[0];
 
         if (!user) {
-            return res.status(404).json({
-                code: 404,
-                message: '用户不存在',
-            });
+            return fail(res, MESSAGE_CODES.USER_NOT_FOUND);
         }
 
-        return res.json({
-            code: 0,
-            message: '获取成功',
-            data: {
+        return success(
+            res,
+            MESSAGE_CODES.GET_SUCCESS,
+            {
                 user,
             },
-        });
+        );
     } catch (err) {
         console.error('GET /api/profile error:', err);
-        return res.status(500).json({
-            code: 500,
-            message: '服务器内部错误',
-        });
+        return httpError(res, 500, MESSAGE_CODES.INTERNAL_SERVER_ERROR);
+    }
+});
+
+/**
+ * @swagger
+ * /api/profile/update:
+ *   post:
+ *     summary: 修改当前登录用户的个人信息
+ *     tags: [Auth]
+ *     security:
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名（唯一，可选）
+ *                 example: "new_username"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: 邮箱（唯一，可选）
+ *                 example: "newemail@example.com"
+ *               nickName:
+ *                 type: string
+ *                 description: 昵称（可选）
+ *                 example: "新昵称"
+ *               avatarUrl:
+ *                 type: string
+ *                 description: 头像URL（可选）
+ *                 example: "https://example.com/avatar.jpg"
+ *     responses:
+ *       200:
+ *         description: 修改成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 0
+ *                 message:
+ *                   type: string
+ *                   example: "修改成功"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         username:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         nick_name:
+ *                           type: string
+ *                         avatar_url:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *       400:
+ *         description: 请求参数错误（如邮箱格式不正确）
+ *       401:
+ *         description: 未认证
+ *       404:
+ *         description: 用户不存在
+ *       409:
+ *         description: 数据冲突（用户名或邮箱已被占用）
+ *       500:
+ *         description: 服务器内部错误
+ */
+// 修改个人信息接口 POST /api/profile/update
+router.post('/profile/update', authMiddleware, async (req, res) => {
+    try {
+        const { username, email, nickName, avatarUrl } = req.body || {};
+        const userId = req.user.id;
+
+        // 验证至少提供了一个要修改的字段
+        if (!username && !email && nickName === undefined && avatarUrl === undefined) {
+            return fail(res, MESSAGE_CODES.NO_FIELDS_TO_UPDATE);
+        }
+
+        // 验证邮箱格式（如果提供了邮箱）
+        if (email) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                return fail(res, MESSAGE_CODES.INVALID_EMAIL_FORMAT);
+            }
+        }
+
+        // 验证用户名格式（如果提供了用户名）
+        if (username) {
+            // 用户名长度限制：3-50个字符
+            if (username.length < 3 || username.length > 50) {
+                return fail(res, MESSAGE_CODES.USERNAME_LENGTH_INVALID);
+            }
+            // 用户名只能包含字母、数字、下划线
+            const usernameRegex = /^[a-zA-Z0-9_]+$/;
+            if (!usernameRegex.test(username)) {
+                return fail(res, MESSAGE_CODES.INVALID_USERNAME_FORMAT);
+            }
+        }
+
+        // 先查询当前用户是否存在且未被删除
+        const currentUsers = await query(
+            `
+      SELECT id, username, email, nick_name, avatar_url, role, is_deleted
+      FROM users
+      WHERE id = ? LIMIT 1
+    `,
+            [userId],
+        );
+
+        const currentUser = currentUsers[0];
+
+        if (!currentUser || currentUser.is_deleted) {
+            return fail(res, MESSAGE_CODES.USER_NOT_FOUND);
+        }
+
+        // 检查用户名唯一性（如果提供了新用户名，且与当前用户名不同）
+        if (username && username !== currentUser.username) {
+            const existedUsers = await query(
+                `
+        SELECT id, username
+        FROM users
+        WHERE username = ? AND id != ? AND is_deleted = 0
+        LIMIT 1
+      `,
+                [username, userId],
+            );
+
+            if (existedUsers[0]) {
+                return fail(res, MESSAGE_CODES.USERNAME_EXISTS);
+            }
+        }
+
+        // 检查邮箱唯一性（如果提供了新邮箱，且与当前邮箱不同）
+        if (email && email !== currentUser.email) {
+            const existedUsers = await query(
+                `
+        SELECT id, email
+        FROM users
+        WHERE email = ? AND id != ? AND is_deleted = 0
+        LIMIT 1
+      `,
+                [email, userId],
+            );
+
+            if (existedUsers[0]) {
+                return fail(res, MESSAGE_CODES.EMAIL_EXISTS);
+            }
+        }
+
+        // 构建更新SQL，只更新提供的字段
+        const updateFields = [];
+        const updateValues = [];
+
+        if (username) {
+            updateFields.push('username = ?');
+            updateValues.push(username);
+        }
+        if (email) {
+            updateFields.push('email = ?');
+            updateValues.push(email);
+        }
+        if (nickName !== undefined) {
+            updateFields.push('nick_name = ?');
+            updateValues.push(nickName || null);
+        }
+        if (avatarUrl !== undefined) {
+            updateFields.push('avatar_url = ?');
+            updateValues.push(avatarUrl || null);
+        }
+
+        // 添加 updated_at
+        updateFields.push('updated_at = NOW()');
+        updateValues.push(userId);
+
+        // 执行更新
+        await query(
+            `
+      UPDATE users
+      SET ${updateFields.join(', ')}
+      WHERE id = ?
+    `,
+            updateValues,
+        );
+
+        // 查询更新后的用户信息
+        const updatedUsers = await query(
+            `
+      SELECT id, username, email, nick_name, avatar_url, role
+      FROM users
+      WHERE id = ? AND is_deleted = 0
+      LIMIT 1
+    `,
+            [userId],
+        );
+
+        const updatedUser = updatedUsers[0];
+
+        if (!updatedUser) {
+            return fail(res, MESSAGE_CODES.USER_NOT_FOUND);
+        }
+
+        return success(
+            res,
+            MESSAGE_CODES.UPDATE_SUCCESS,
+            {
+                user: updatedUser,
+            },
+        );
+    } catch (err) {
+        console.error('POST /api/profile/update error:', err);
+        // 处理唯一约束冲突
+        if (err && err.code === 'ER_DUP_ENTRY') {
+            return fail(res, MESSAGE_CODES.USERNAME_OR_EMAIL_EXISTS);
+        }
+        return httpError(res, 500, MESSAGE_CODES.INTERNAL_SERVER_ERROR);
     }
 });
 
@@ -441,10 +703,7 @@ router.get('/profile', authMiddleware, async (req, res) => {
  */
 // 示例：仅 admin 角色可访问的接口
 router.get('/admin-only', authMiddleware, requireRole('admin'), (req, res) => {
-    return res.json({
-        code: 0,
-        message: '欢迎，管理员',
-    });
+    return success(res, MESSAGE_CODES.SUCCESS, null, '欢迎，管理员');
 });
 
 module.exports = router;
