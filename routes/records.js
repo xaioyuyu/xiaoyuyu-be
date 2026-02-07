@@ -7,8 +7,12 @@ const { success, fail, httpError, MESSAGE_CODES } = require('../utils/response')
 
 /**
  * 将 ISO 8601 格式的时间字符串转换为 MySQL DATETIME 格式
- * @param {string} isoString - ISO 8601 格式的时间字符串，如 "2026-02-04T13:47:19.029Z"
- * @returns {string} MySQL DATETIME 格式，如 "2026-02-04 13:47:19"
+ * 注意：使用本地时间方法（getHours 而不是 getUTCHours），
+ * 因为数据库连接配置了 timezone: '+08:00'，MySQL2 驱动会将传入的 DATETIME 字符串
+ * 视为本地时区（东8区）时间，然后转换为数据库服务器时区存储。
+ * 
+ * @param {string} isoString - ISO 8601 格式的时间字符串，如 "2026-02-04T13:47:19.029Z" 或 "2026-02-04T21:47:19+08:00"
+ * @returns {string} MySQL DATETIME 格式，如 "2026-02-04 21:47:19"（本地时区）
  */
 function formatDateTimeForMySQL(isoString) {
     if (!isoString) {
@@ -20,12 +24,14 @@ function formatDateTimeForMySQL(isoString) {
             throw new Error('Invalid date string');
         }
         // 格式化为 MySQL DATETIME 格式：YYYY-MM-DD HH:MM:SS
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        const hours = String(date.getUTCHours()).padStart(2, '0');
-        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-        const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+        // 使用本地时间方法（getFullYear, getHours 等），而不是 UTC 方法
+        // 这样传入的时间会被 MySQL2 驱动正确识别为本地时区（+08:00）时间
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     } catch (err) {
         console.error('formatDateTimeForMySQL error:', err);
@@ -664,10 +670,8 @@ router.post('/records/detail', async (req, res) => {
             type_id: record.type_id,
             type_name: record.type_name,
             amount: record.amount,
-            category: {
-                id: record.category_id,
-                name: record.category_name,
-            },
+            category_id: record.category_id,
+            category_name: record.category_name,
             occurred_at: record.occurred_at,
             remark: record.remark,
             tags: tagRows || [],
@@ -1129,10 +1133,10 @@ router.post('/records/list', async (req, res) => {
  *       500:
  *         description: 服务器内部错误
  */
-router.get('/records/summary', async (req, res) => {
+router.post('/records/summary', async (req, res) => {
     try {
         const userId = req.user.id;
-        const { start_date, end_date, group_by = 'day', type_id } = req.query || {};
+        const { start_date, end_date, group_by = 'day', type_id } = req.body || {};
 
         if (!start_date || !end_date) {
             return fail(res, MESSAGE_CODES.INVALID_PARAMS);
@@ -1223,10 +1227,10 @@ router.get('/records/summary', async (req, res) => {
  *       500:
  *         description: 服务器内部错误
  */
-router.get('/records/summary-by-category', async (req, res) => {
+router.post('/records/summary-by-category', async (req, res) => {
     try {
         const userId = req.user.id;
-        const { start_date, end_date, type_id } = req.query || {};
+        const { start_date, end_date, type_id } = req.body || {};
 
         if (!start_date || !end_date) {
             return fail(res, MESSAGE_CODES.INVALID_PARAMS);

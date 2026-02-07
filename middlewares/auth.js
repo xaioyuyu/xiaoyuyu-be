@@ -8,7 +8,7 @@ const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'please_change_ac
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'please_change_refresh_secret'; // TODO: 请在 .env 中配置安全的随机字符串
 
 // Access Token 过期时间（秒），建议 15 分钟
-const ACCESS_TOKEN_EXPIRES_IN = parseInt(process.env.ACCESS_TOKEN_EXPIRES_IN || '900', 10);
+const ACCESS_TOKEN_EXPIRES_IN = parseInt(process.env.ACCESS_TOKEN_EXPIRES_IN || '86400', 10); // 默认1天
 // Refresh Token 过期时间（秒），记住登录与普通登录可区分
 const REFRESH_TOKEN_EXPIRES_IN = parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || '604800', 10); // 默认7天
 const REFRESH_TOKEN_EXPIRES_IN_REMEMBER = parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_REMEMBER || '2592000', 10); // 默认30天
